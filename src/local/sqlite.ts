@@ -56,39 +56,38 @@ async function doInit(): Promise<SQLiteDBConnection> {
   sqlite = new SQLiteConnection(CapacitorSQLite)
   await initWebStoreIfNeeded()
 
-  // Does a native "pcc" connection already exist? After a WebView reload the
-  // native connection SURVIVES (still open, schema + PRAGMA intact) while this
-  // fresh JS context has no handle to it. The raw plugin's isConnection reports
-  // native state (SQLiteConnection.isConnection only checks the JS map, which is
-  // empty here). NOTE: this native-aware check is the crux of the reload fix.
-  let nativeExists = false
+  // RELOAD RECONCILIATION (QA bug T16-1). After an in-page WebView reload the
+  // NATIVE "pcc" connection survives (Android keeps the app process), but this
+  // fresh JS context starts with an empty connection map. The plugin's
+  // isConnection/retrieveConnection only consult that JS map, so they can't see
+  // the surviving connection — and a plain createConnection then fails natively
+  // with "Connection pcc already exists", which previously bubbled up as a DB
+  // error and silently logged the user out on every reload.
+  //
+  // checkConnectionsConsistency() sends the JS-side connection set to native and
+  // tells it to converge on exactly that set. With an empty JS map (our state
+  // right after a reload) native closes the orphaned "pcc" connection — closing
+  // a connection does NOT touch the database file on disk — so the
+  // createConnection below starts from a clean, consistent state and succeeds.
+  // On a genuine cold start there is nothing to reconcile and this is a no-op.
   try {
-    // isConnection exists on the plugin at runtime (SQLiteConnection.isConnection
-    // delegates to it) but isn't in the exported plugin type; cast to reach it.
-    const rawPlugin = CapacitorSQLite as unknown as {
-      isConnection(o: { database: string; readonly: boolean }): Promise<{ result: boolean }>
-    }
-    nativeExists = (await rawPlugin.isConnection({ database: DB_NAME, readonly: false })).result
-  } catch {}
-
-  if (nativeExists) {
-    // REUSE the surviving connection. Do NOT close+recreate it — doing so has
-    // been observed to corrupt the native connection after a reload so that the
-    // *second* query never returns, hanging the app on "Loading…" forever
-    // (QA bug T16-1). Wrapping the live native connection with a fresh JS handle
-    // avoids that entirely; schema + foreign_keys PRAGMA already persist on it.
-    dbConn = new SQLiteDBConnection(DB_NAME, false, CapacitorSQLite)
-    if (!(await dbConn.isDBOpen()).result) {
-      await dbConn.open()
-    }
-  } else {
-    // Cold start (fresh process): create, open, and initialise the schema.
-    dbConn = await sqlite.createConnection(DB_NAME, false, "no-encryption", 1, false)
-    await dbConn.open()
-    // Idempotent DDL; run without the plugin's implicit BEGIN/COMMIT wrapper.
-    await dbConn.execute("PRAGMA foreign_keys = ON;", false)
-    await dbConn.execute(SCHEMA_SQL, false)
+    await sqlite.checkConnectionsConsistency()
+  } catch {
+    // Non-fatal: consistency check failing just means we proceed to create.
   }
+
+  const alreadyOpen = (await sqlite.isConnection(DB_NAME, false)).result
+  dbConn = alreadyOpen
+    ? await sqlite.retrieveConnection(DB_NAME, false)
+    : await sqlite.createConnection(DB_NAME, false, "no-encryption", 1, false)
+
+  if (!(await dbConn.isDBOpen()).result) {
+    await dbConn.open()
+  }
+  // Idempotent DDL (CREATE TABLE IF NOT EXISTS) — safe to re-run on an existing
+  // database; it preserves all rows. Run without the implicit BEGIN/COMMIT wrap.
+  await dbConn.execute("PRAGMA foreign_keys = ON;", false)
+  await dbConn.execute(SCHEMA_SQL, false)
 
   if (Capacitor.getPlatform() === "web") {
     await sqlite.saveToStore(DB_NAME)

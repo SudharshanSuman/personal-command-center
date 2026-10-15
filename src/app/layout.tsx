@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/local/auth-context";
+import { UrlTidy } from "@/local/url-tidy";
 import "./globals.css";
 
 const sans = Inter({ subsets: ["latin"], variable: "--font-sans" });
@@ -28,6 +29,7 @@ export default function RootLayout({
         )}
       >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <UrlTidy />
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>
       </body>
