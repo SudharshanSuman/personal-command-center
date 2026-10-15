@@ -1,0 +1,421 @@
+// Personal Command Center — Prisma schema
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth / identity
+// Single-user app, but modeled as a real User row (not a hardcoded singleton)
+// so the schema stays portable to a future multi-user / hosted deployment.
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile  PersonalizationProfile?
+  sessions Session[]
+
+  tasks         Task[]
+  events        Event[]
+  goals         Goal[]
+  assessments   Assessment[]
+  habits        Habit[]
+  transactions  Transaction[]
+  budgets       Budget[]
+  reminderRules ReminderRule[]
+  dailyReviews  DailyReview[]
+
+  @@map("users")
+}
+
+// Server-side session store backing the auth session cookie (opaque token
+// referencing this row; no JWT secrets required).
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Editable onboarding/personalization profile: routine, priorities, theme,
+// notification prefs. One-to-one with User; created during onboarding.
+model PersonalizationProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // JSON-encoded free-form structures (routine blocks, priority weights,
+  // important dates) that don't need to be individually queryable yet.
+  routine        String? // JSON: typical wake/sleep/work windows
+  priorities     String? // JSON: ordered list of life-priority labels
+  importantDates String? // JSON: [{ label, date }]
+
+  theme               String  @default("system") // "light" | "dark" | "system"
+  quietHoursStart     String? // "HH:mm"
+  quietHoursEnd       String? // "HH:mm"
+  notificationsEnabled Boolean @default(true)
+  onboardingCompleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("personalization_profiles")
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Task {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  status      TaskStatus @default(TODO)
+  priority    Priority   @default(MEDIUM)
+  category    String?
+  tags        String? // JSON array of strings
+
+  dueDate  DateTime?
+  progress Int       @default(0) // 0-100
+
+  estimatedMinutes Int?
+  actualMinutes    Int?
+
+  // Recurrence rule, e.g. RFC5545-ish or a simple JSON descriptor
+  // (frequency, interval, byDay, until). Null = one-off task.
+  recurrenceRule String?
+
+  parentTaskId String?
+  parentTask   Task?   @relation("Subtasks", fields: [parentTaskId], references: [id], onDelete: Cascade)
+  subtasks     Task[]  @relation("Subtasks")
+
+  goalId String?
+  goal   Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  assessmentId String?
+  assessment   Assessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+
+  events        Event[]
+  reminderRules ReminderRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, dueDate])
+  @@index([parentTaskId])
+  @@map("tasks")
+}
+
+// ---------------------------------------------------------------------------
+// Calendar / schedule
+// ---------------------------------------------------------------------------
+
+enum EventType {
+  EVENT
+  TIME_BLOCK
+  STUDY_SESSION
+  HABIT_BLOCK
+}
+
+model Event {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  type        EventType @default(EVENT)
+
+  startsAt DateTime
+  endsAt   DateTime
+  allDay   Boolean  @default(false)
+  location String?
+
+  recurrenceRule String? // same convention as Task.recurrenceRule
+
+  taskId String?
+  task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  assessmentId String?
+  assessment   Assessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, startsAt])
+  @@map("events")
+}
+
+// ---------------------------------------------------------------------------
+// Goals
+// ---------------------------------------------------------------------------
+
+enum GoalTimeframe {
+  SHORT_TERM
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+model Goal {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  timeframe   GoalTimeframe
+  status      GoalStatus    @default(ACTIVE)
+
+  targetDate DateTime?
+  progress   Int       @default(0) // 0-100, derived from linked tasks or set manually
+
+  tasks Task[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@map("goals")
+}
+
+// ---------------------------------------------------------------------------
+// Assessments (exam/deadline timeline)
+// ---------------------------------------------------------------------------
+
+enum PrepStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  REVIEW
+  READY
+}
+
+model Assessment {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subject      String
+  title        String
+  date         DateTime
+  location     String?
+  link         String?
+  syllabus     String? // JSON array of topic strings
+  prepStatus   PrepStatus @default(NOT_STARTED)
+  importance   Priority   @default(MEDIUM)
+  confidence   Int? // 1-5 self-rated
+  notes        String?
+  resultSummary String?
+
+  tasks  Task[]
+  events Event[] // auto-suggested study blocks + revision sessions
+  reminderRules ReminderRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+  @@map("assessments")
+}
+
+// ---------------------------------------------------------------------------
+// Reminders
+// ---------------------------------------------------------------------------
+
+enum ReminderTargetType {
+  TASK
+  ASSESSMENT
+  EVENT
+  HABIT
+  CUSTOM
+}
+
+model ReminderRule {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  targetType ReminderTargetType
+  taskId       String?
+  task         Task?       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  assessmentId String?
+  assessment   Assessment? @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  // Minutes before the target's due/start time to fire (0 = at the exact
+  // time). Multiple rows allow "advance" + "exact-time" reminders per target.
+  offsetMinutes Int
+
+  message String?
+
+  // Dedupe/quiet-hours bookkeeping so the same reminder never fires twice
+  // and nothing fires during the user's configured quiet hours.
+  lastFiredAt DateTime?
+  dismissedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("reminder_rules")
+}
+
+// ---------------------------------------------------------------------------
+// Habits
+// ---------------------------------------------------------------------------
+
+model Habit {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  targetDaysPerWeek Int @default(7)
+  active      Boolean @default(true)
+
+  logs HabitLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, active])
+  @@map("habits")
+}
+
+model HabitLog {
+  id      String @id @default(cuid())
+  habitId String
+  habit   Habit  @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  // Date-only semantics (stored at midnight UTC) — one log per habit per day.
+  date      DateTime
+  completed Boolean  @default(true)
+  note      String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([habitId, date])
+  @@index([habitId, date])
+  @@map("habit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Money tracker
+// ---------------------------------------------------------------------------
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+model Transaction {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type     TransactionType
+  amount   Float
+  category String
+  note     String?
+  date     DateTime
+
+  // Recurring expense/subscription support (Should Have): when set, this
+  // transaction is a template a scheduler clones forward.
+  recurrenceRule String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+  @@index([userId, category])
+  @@map("transactions")
+}
+
+model Budget {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category String
+  amount   Float // budgeted amount for the period
+  period   String @default("monthly") // "monthly" | "yearly"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, category, period])
+  @@map("budgets")
+}
+
+// ---------------------------------------------------------------------------
+// Daily / weekly / monthly review workflow
+// ---------------------------------------------------------------------------
+
+enum ReviewPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model DailyReview {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  period ReviewPeriod @default(DAILY)
+  date   DateTime // anchor date for the period (day, or first day of week/month)
+
+  completedSummary String? // JSON: task/habit ids marked completed
+  missedSummary    String? // JSON: task/habit ids marked missed
+  carryOver        String? // JSON: task ids carried to the next period
+  wentWell         String?
+  needsAttention   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, period, date])
+  @@index([userId, period, date])
+  @@map("daily_reviews")
+}

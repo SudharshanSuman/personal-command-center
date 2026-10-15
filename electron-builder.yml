@@ -1,0 +1,34 @@
+appId: in.personalcommandcenter.desktop
+productName: Personal Command Center
+copyright: Copyright © 2026
+
+directories:
+  output: dist-electron
+  buildResources: build
+
+asar: false
+
+files:
+  - "electron/**"
+  - "build/icon.png"
+  - "package.json"
+  - "out/**"
+
+linux:
+  category: Utility
+  icon: build/icon.png
+  maintainer: Sudharshan <sudharshan@local>
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  synopsis: Personal Command Center desktop application
+  description: Self-hosted personal command center for tasks, calendar, goals, habits, finances, and reviews.
+
+deb:
+  maintainer: Sudharshan <sudharshan@local>
+  synopsis: Personal Command Center desktop application
+  description: Self-hosted personal command center for tasks, calendar, goals, habits, finances, and reviews.

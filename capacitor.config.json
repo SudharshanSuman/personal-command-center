@@ -1,0 +1,10 @@
+{
+  "appId": "com.pcc.commandcenter",
+  "appName": "Command Center",
+  "webDir": "out",
+  "plugins": {
+    "CapacitorSQLite": {
+      "androidIsEncryption": false
+    }
+  }
+}

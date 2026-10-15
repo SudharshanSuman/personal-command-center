@@ -1,0 +1,51 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# electron-builder output (packaged binaries, unpacked app, debug yaml)
+# NOTE: /build/ is intentionally NOT ignored here — it holds build/icon.png,
+# a source asset electron-builder.yml and electron/main.js need at build time,
+# not generated output.
+/dist-electron/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env
+.env*.local
+!.env.example
+
+# database
+/prisma/dev.db
+/prisma/dev.db-journal
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+/src/generated/prisma
+
+# Claude Code harness local state (session lock files, write-ahead cache) —
+# machine/session-specific, not project source.
+/.claude/
